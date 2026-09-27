@@ -31,3 +31,4 @@ jobs:
           FIREBASE_DB_URL: ${{ secrets.FIREBASE_DB_URL }}
           FIREBASE_AUTH_SECRET: ${{ secrets.FIREBASE_AUTH_SECRET }}
           ADMIN_IDS: "8711035827"
+
