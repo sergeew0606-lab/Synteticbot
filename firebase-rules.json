@@ -1,0 +1,9 @@
+{
+  "rules": {
+    "users": {
+      ".read": false,
+      ".write": false,
+      ".indexOn": ["nickname", "email"]
+    }
+  }
+}
