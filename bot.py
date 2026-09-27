@@ -345,7 +345,7 @@ async def got_nickname(message: Message, state: FSMContext) -> None:
     await state.update_data(nickname=nickname)
     await state.set_state(Registration.password)
     await message.answer(
-        "Придумай пароль:\nот 6 до 64 символов.\n\n"
+        "Придумай пароль:\nот 6 до 64 символов, только английские символы (латиница, цифры, символы).\n\n"
         "⚠️ Отправь его одним сообщением — я сразу удалю его из чата, "
         "в базе будет храниться как есть, чтобы можно было восстановить аккаунт."
     )
@@ -356,6 +356,11 @@ async def got_password(message: Message, state: FSMContext) -> None:
     password = message.text
     if not 6 <= len(password) <= 64:
         await message.answer("Пароль должен быть от 6 до 64 символов. Попробуй ещё раз.")
+        return
+    if not all(" " <= ch <= "~" for ch in password):
+        await message.answer(
+            "Пароль должен быть на английском (латиница, цифры и символы), без русских букв. Попробуй ещё раз."
+        )
         return
     data = await state.get_data()
     try:
