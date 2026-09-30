@@ -594,8 +594,11 @@ async def download_client(message: Message) -> None:
     if not path:
         await message.answer("Файл клиента ещё не добавлен.")
         return
+    size = os.path.getsize(path)
+    mtime = datetime.fromtimestamp(os.path.getmtime(path)).strftime("%d.%m.%Y %H:%M")
     await message.answer_document(
-        FSInputFile(path), caption="Syntetic Client | Legit 26.2 fabric"
+        FSInputFile(path),
+        caption=f"Syntetic Client | Legit 26.2 fabric\nSynteticLoader.exe • {size} байт • сборка {mtime}",
     )
 
 
