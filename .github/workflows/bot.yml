@@ -7,6 +7,10 @@ on:
     - cron: "7 */5 * * *"
   workflow_dispatch:
 
+permissions:
+  actions: write
+  contents: read
+
 concurrency:
   group: synteticbot
   cancel-in-progress: false
@@ -14,7 +18,7 @@ concurrency:
 jobs:
   bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 350
+    timeout-minutes: 355
     steps:
       - uses: actions/checkout@v4
 
@@ -27,6 +31,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run bot
+        timeout-minutes: 330
         run: python bot.py
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
@@ -34,3 +39,12 @@ jobs:
           FIREBASE_AUTH_SECRET: ${{ secrets.FIREBASE_AUTH_SECRET }}
           ADMIN_IDS: "8711035827"
 
+      - name: Restart bot
+        if: always()
+        run: |
+          sleep 30
+          curl -sS -X POST \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/bot.yml/dispatches" \
+            -d '{"ref":"master"}' || true

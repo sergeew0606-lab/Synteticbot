@@ -649,7 +649,19 @@ async def got_key(message: Message, state: FSMContext) -> None:
         return
 
     if record.get("days") is not None:
-        until = date.today() + timedelta(days=int(record["days"]))
+        base = date.today()
+        user_rec = await get_db().get_user(message.from_user.id)
+        cur = ((user_rec or {}).get("subscription") or {}).get("until")
+        try:
+            cur_date = date.fromisoformat(cur)
+            if cur_date > base:
+                base = cur_date
+        except Exception:
+            pass
+        if base >= FOREVER_DATE:
+            until = FOREVER_DATE
+        else:
+            until = base + timedelta(days=int(record["days"]))
     else:
         try:
             until = date.fromisoformat(record.get("until"))
