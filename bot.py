@@ -590,6 +590,18 @@ async def download_client(message: Message) -> None:
     if not await get_db().get_user(message.from_user.id):
         await message.answer(GUEST_TEXT, reply_markup=guest_keyboard())
         return
+    loader = await get_db().get_loader()
+    if loader and loader.get("file_id"):
+        info = f"\n{loader.get('file_name', 'SynteticLoader.exe')} • {loader.get('file_size', 0)} байт"
+        if loader.get("updated_at"):
+            try:
+                info += " • " + datetime.fromisoformat(loader["updated_at"]).strftime("%d.%m.%Y %H:%M")
+            except Exception:
+                pass
+        await message.answer_document(
+            loader["file_id"], caption="Syntetic Client | Legit 26.2 fabric" + info
+        )
+        return
     path = find_client_file()
     if not path:
         await message.answer("Файл клиента ещё не добавлен.")
@@ -599,6 +611,32 @@ async def download_client(message: Message) -> None:
     await message.answer_document(
         FSInputFile(path),
         caption=f"Syntetic Client | Legit 26.2 fabric\nSynteticLoader.exe • {size} байт • сборка {mtime}",
+    )
+
+
+@router.message(F.document)
+async def upload_loader(message: Message) -> None:
+    if not is_admin(message.from_user.id):
+        return
+    doc = message.document
+    name = (doc.file_name or "").lower()
+    if not name.endswith(".exe"):
+        await message.answer("Пришли .exe файл лоудера документом.")
+        return
+    await get_db().set_loader(
+        {
+            "file_id": doc.file_id,
+            "file_unique_id": doc.file_unique_id,
+            "file_name": doc.file_name,
+            "file_size": doc.file_size,
+            "mime_type": doc.mime_type,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "updated_by": message.from_user.id,
+        }
+    )
+    await message.answer(
+        f"✅ Лоудер обновлён: {doc.file_name} • {doc.file_size} байт.\n"
+        "Теперь кнопка «📥 Скачать клиент» отдаёт его."
     )
 
 

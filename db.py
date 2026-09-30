@@ -19,6 +19,21 @@ class Database:
     def _keys_url(self, path: str = "") -> str:
         return f"{self._root}/keys{path}.json?auth={self._secret}"
 
+    def _loader_url(self) -> str:
+        return f"{self._root}/loader.json?auth={self._secret}"
+
+    async def get_loader(self) -> dict | None:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(self._loader_url())
+            resp.raise_for_status()
+        data = resp.json()
+        return data if isinstance(data, dict) else None
+
+    async def set_loader(self, payload: dict) -> None:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.put(self._loader_url(), json=payload)
+            resp.raise_for_status()
+
     async def get_user(self, user_id: int) -> dict | None:
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.get(self._url(f"/{user_id}"))
