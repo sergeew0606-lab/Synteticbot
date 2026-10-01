@@ -126,7 +126,7 @@ def admin_keyboard() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text="🔑 Создать ключ"), KeyboardButton(text="🚫 Заблокировать")],
             [KeyboardButton(text="✅ Разблокировать"), KeyboardButton(text="📋 Пароли")],
-            [KeyboardButton(text="🔙 Назад")],
+            [KeyboardButton(text="👥 Пользователи"), KeyboardButton(text="🔙 Назад")],
         ],
         resize_keyboard=True,
     )
@@ -204,8 +204,6 @@ def profile_text(user: dict) -> str:
         f"username: @{username}" if username else "username: нет",
         f"дата регистрации: {reg_disp}",
     ]
-    if user.get("password"):
-        lines.append(f"пароль: {user.get('password')}")
     lines.append(f"HWID: {hwid}" if hwid else "HWID: нет")
     subscription = user.get("subscription")
     role = None
@@ -353,7 +351,10 @@ async def got_nickname(message: Message, state: FSMContext) -> None:
 
 @router.message(Registration.password, F.text)
 async def got_password(message: Message, state: FSMContext) -> None:
-    password = message.text
+    password = (message.text or "").replace(" ", "")
+    if not password:
+        await message.answer("Пароль не может быть пустым. Придумай другой.")
+        return
     if not 6 <= len(password) <= 64:
         await message.answer("Пароль должен быть от 6 до 64 символов. Попробуй ещё раз.")
         return
@@ -420,7 +421,8 @@ async def login_nickname(message: Message, state: FSMContext) -> None:
 
 @router.message(Login.password, F.text)
 async def login_password(message: Message, state: FSMContext) -> None:
-    password = message.text
+    password = message.text or ""
+    password_nospace = password.replace(" ", "")
     try:
         await message.delete()
     except Exception:
@@ -431,10 +433,10 @@ async def login_password(message: Message, state: FSMContext) -> None:
         return
     stored = user.get("password")
     if stored is not None:
-        correct = stored == password
+        correct = password == stored or password_nospace == stored.replace(" ", "")
     else:
         correct = verify_password(
-            password, user.get("password_hash", ""), user.get("password_salt", "")
+            password_nospace, user.get("password_hash", ""), user.get("password_salt", "")
         )
     if not correct:
         await message.answer("Неверный пароль. Попробуй ещё раз.")
@@ -886,6 +888,40 @@ async def cmd_count(message: Message) -> None:
         await message.answer("Не понял команду. Нажми /start.")
         return
     await message.answer(f"Всего зарегистрировано: {await get_db().count_users()}")
+
+
+@router.message(F.text == "👥 Пользователи")
+async def admin_users(message: Message) -> None:
+    if not is_admin(message.from_user.id):
+        return
+    users = await get_db().list_users()
+    if not users:
+        await message.answer("Пользователей нет.")
+        return
+    items = []
+    for uid, u in sorted(users.items(), key=lambda kv: (kv[1] or {}).get("nickname") or ""):
+        if not isinstance(u, dict):
+            continue
+        nick = u.get("nickname") or str(uid)
+        uname = f"@{u['username']}" if u.get("username") else "—"
+        status = " 🚫" if u.get("blocked") else ""
+        items.append(f"{nick} • {uname}{status}")
+    await message.answer(
+        "👥 Пользователи:\n" + "\n".join(items),
+        reply_markup=ReplyKeyboardMarkup(
+            keyboard=[
+                [KeyboardButton(text="🔄 Обновить список"), KeyboardButton(text="🔙 Назад")],
+            ],
+            resize_keyboard=True,
+        ),
+    )
+
+
+@router.message(F.text == "🔄 Обновить список")
+async def admin_users_refresh(message: Message) -> None:
+    if not is_admin(message.from_user.id):
+        return
+    await admin_users(message)
 
 
 @router.message(F.text)
