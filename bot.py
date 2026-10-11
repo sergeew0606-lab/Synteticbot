@@ -76,6 +76,30 @@ DURATIONS: list[dict] = [
 # цены в Telegram Stars, соответствуют DURATIONS[0..7] (бета высшего уровня не продаётся)
 STARS: list[int] = [5, 17, 30, 50, 89, 129, 179, 259]
 
+# сроки для ручной выдачи подписки админом
+GRANT_DURATIONS: list[dict] = [
+    {"label": "1 месяц", "kind": "paid", "days": 30},
+    {"label": "1 год", "kind": "paid", "days": 365},
+    {"label": "навсегда", "kind": "forever", "days": None},
+    {"label": "бета среднего уровня", "kind": "beta_mid", "days": None},
+    {"label": "бета высшего уровня", "kind": "beta_high", "days": None},
+]
+
+
+def compute_until(days: int | None, current_until: str | None = None) -> date:
+    if days is None:
+        return FOREVER_DATE
+    base = date.today()
+    try:
+        cur = date.fromisoformat(current_until)
+        if cur > base:
+            base = cur
+    except Exception:
+        pass
+    if base >= FOREVER_DATE:
+        return FOREVER_DATE
+    return base + timedelta(days=days)
+
 
 class Registration(StatesGroup):
     nickname = State()
@@ -126,7 +150,8 @@ def admin_keyboard() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text="🔑 Создать ключ"), KeyboardButton(text="🚫 Заблокировать")],
             [KeyboardButton(text="✅ Разблокировать"), KeyboardButton(text="📋 Пароли")],
-            [KeyboardButton(text="👥 Пользователи"), KeyboardButton(text="🔙 Назад")],
+            [KeyboardButton(text="👥 Пользователи"), KeyboardButton(text="🎁 Выдать подписку")],
+            [KeyboardButton(text="🔄 Сбросить HWID"), KeyboardButton(text="🔙 Назад")],
         ],
         resize_keyboard=True,
     )
@@ -232,7 +257,7 @@ def _session_expired(user: dict) -> bool:
     return datetime.now(timezone.utc) - ts > timedelta(days=SESSION_DAYS)
 
 
-async def should_stop(message: Message) -> bool:
+async def should_stop(message: Message, state: FSMContext | None = None) -> bool:
     db = get_db()
     user = await db.get_user(message.from_user.id)
     if not user:
@@ -243,9 +268,11 @@ async def should_stop(message: Message) -> bool:
     if user.get("logged_in"):
         if _session_expired(user):
             await db.patch_user(message.from_user.id, {"logged_in": False, "login_at": None})
+            if state is not None:
+                await state.set_state(Login.nickname)
             await message.answer(
                 f"⏳ Прошло {SESSION_DAYS} дня — сессия сброшена.\n"
-                "Войдите в аккаунт заново, чтобы мы убедились, что это вы.",
+                "Введи свой никнейм, чтобы войти заново.",
                 reply_markup=login_keyboard(),
             )
             return True
@@ -255,8 +282,8 @@ async def should_stop(message: Message) -> bool:
     return False
 
 
-async def is_blocked(message: Message) -> bool:
-    return await should_stop(message)
+async def is_blocked(message: Message, state: FSMContext | None = None) -> bool:
+    return await should_stop(message, state)
 
 
 def generate_key(existing: set[str]) -> str:
@@ -293,7 +320,7 @@ async def backfill_uids() -> None:
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext) -> None:
     await state.clear()
-    if await should_stop(message):
+    if await should_stop(message, state):
         return
     user = await get_db().get_user(message.from_user.id)
     if not user:
@@ -395,7 +422,7 @@ async def got_password(message: Message, state: FSMContext) -> None:
 @router.message(Command("login"))
 @router.message(F.text == "🔑 Вход в аккаунт")
 async def start_login(message: Message, state: FSMContext) -> None:
-    if await is_blocked(message):
+    if await is_blocked(message, state):
         return
     user = await get_db().get_user(message.from_user.id)
     if not user:
@@ -410,10 +437,16 @@ async def start_login(message: Message, state: FSMContext) -> None:
 
 @router.message(Login.nickname, F.text)
 async def login_nickname(message: Message, state: FSMContext) -> None:
-    nickname = message.text.strip()
+    nickname = (message.text or "").strip()
+    if not NICKNAME_RE.fullmatch(nickname):
+        await message.answer("Никнейм не подходит: 3–32 символа, латиница, цифры, _")
+        return
     user = await get_db().find_by_nickname(nickname)
-    if not user or user.get("user_id") != message.from_user.id:
+    if not user:
         await message.answer("Аккаунт с таким никнеймом не найден. Попробуй ещё раз.")
+        return
+    if str(user.get("user_id")) != str(message.from_user.id):
+        await message.answer("Этот ник не твой. Войди под своим аккаунтом.")
         return
     await state.set_state(Login.password)
     await message.answer("Введи пароль:")
@@ -565,9 +598,9 @@ async def on_paid(message: Message) -> None:
     await message.answer(
         f"Оплачено: {stars} ⭐ ✅\n"
         f"Подписка: {duration['label']}\n\n"
-        f"Твой ключ:\n{key}\n\n"
         "Активируй его кнопкой «🎟 Активировать ключ» — отсчёт начнётся с момента активации."
     )
+    await message.answer(f"<code>{key}</code>")
 
 
 def find_client_file() -> str | None:
@@ -668,7 +701,7 @@ async def logout(message: Message, state: FSMContext) -> None:
 
 @router.message(F.text == "🎟 Активировать ключ")
 async def start_activate(message: Message, state: FSMContext) -> None:
-    if await is_blocked(message):
+    if await is_blocked(message, state):
         return
     if not await get_db().get_user(message.from_user.id):
         await message.answer(GUEST_TEXT, reply_markup=guest_keyboard())
@@ -692,19 +725,9 @@ async def got_key(message: Message, state: FSMContext) -> None:
         return
 
     if record.get("days") is not None:
-        base = date.today()
         user_rec = await get_db().get_user(message.from_user.id)
         cur = ((user_rec or {}).get("subscription") or {}).get("until")
-        try:
-            cur_date = date.fromisoformat(cur)
-            if cur_date > base:
-                base = cur_date
-        except Exception:
-            pass
-        if base >= FOREVER_DATE:
-            until = FOREVER_DATE
-        else:
-            until = base + timedelta(days=int(record["days"]))
+        until = compute_until(int(record["days"]), cur)
     else:
         try:
             until = date.fromisoformat(record.get("until"))
@@ -770,7 +793,7 @@ async def create_key_duration(call: CallbackQuery, state: FSMContext) -> None:
     if duration["days"] is None:
         until = FOREVER_DATE
     else:
-        until = date.today() + timedelta(days=duration["days"])
+        until = compute_until(int(duration["days"]))
 
     await get_db().save_key(
         key,
@@ -792,13 +815,16 @@ async def create_key_duration(call: CallbackQuery, state: FSMContext) -> None:
         term = f"{duration['label']} — отсчёт с момента активации"
     text = (
         "🔑 Ключ создан\n\n"
-        f"{key}\n\n"
         f"Срок: {duration['label']}\n"
         f"{term}\n"
         "Ключ начинает работать, когда его активируют."
     )
-    await call.message.edit_text(text, reply_markup=None)
     await call.answer("Готово")
+    try:
+        await call.message.edit_text(text, reply_markup=None)
+    except Exception:
+        pass
+    await call.message.answer(f"<code>{key}</code>")
 
 
 @router.message(F.text.in_({"🚫 Заблокировать", "🚫 Заблокировать пользователя"}))
@@ -924,9 +950,132 @@ async def admin_users_refresh(message: Message) -> None:
     await admin_users(message)
 
 
+def hwid_users_keyboard(users: dict) -> InlineKeyboardMarkup:
+    buttons = []
+    for uid, u in sorted(users.items(), key=lambda kv: (kv[1] or {}).get("nickname") or ""):
+        if not isinstance(u, dict):
+            continue
+        hwid = u.get("hwid")
+        if not hwid or hwid == "нет":
+            continue
+        label = u.get("nickname") or str(uid)
+        buttons.append(InlineKeyboardButton(text=f"♻️ {label}", callback_data=f"hwreset:{uid}"))
+    if not buttons:
+        return InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="пусто", callback_data="adm:none")]]
+        )
+    rows = [buttons[i : i + 2] for i in range(0, len(buttons), 2)]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def grant_users_keyboard(users: dict) -> InlineKeyboardMarkup:
+    buttons = []
+    for uid, u in sorted(users.items(), key=lambda kv: (kv[1] or {}).get("nickname") or ""):
+        if not isinstance(u, dict):
+            continue
+        label = u.get("nickname") or str(uid)
+        buttons.append(InlineKeyboardButton(text=label, callback_data=f"giv:{uid}"))
+    if not buttons:
+        return InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="пусто", callback_data="adm:none")]]
+        )
+    rows = [buttons[i : i + 2] for i in range(0, len(buttons), 2)]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.message(F.text == "🎁 Выдать подписку")
+async def grant_start(message: Message) -> None:
+    if not is_admin(message.from_user.id):
+        return
+    users = await get_db().list_users()
+    await message.answer(
+        "Кому выдаём подписку?",
+        reply_markup=grant_users_keyboard(users),
+    )
+
+
+@router.callback_query(F.data.startswith("giv:"))
+async def cb_grant_user(call: CallbackQuery) -> None:
+    if not is_admin(call.from_user.id):
+        await call.answer("Нет доступа", show_alert=True)
+        return
+    uid = int(call.data.split(":")[1])
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=d["label"], callback_data=f"givdur:{uid}:{i}"
+            )
+        ]
+        for i, d in enumerate(GRANT_DURATIONS)
+    ]
+    await call.message.edit_text("Какой срок выдаём?", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("givdur:"))
+async def cb_grant_duration(call: CallbackQuery) -> None:
+    if not is_admin(call.from_user.id):
+        await call.answer("Нет доступа", show_alert=True)
+        return
+    _, raw_uid, raw_index = call.data.split(":")
+    uid = int(raw_uid)
+    duration = GRANT_DURATIONS[int(raw_index)]
+    target = await get_db().get_user(uid)
+    if not target:
+        await call.answer("Пользователь не найден", show_alert=True)
+        return
+    current = ((target.get("subscription") or {}) if isinstance(target.get("subscription"), dict) else {}).get("until")
+    until = compute_until(duration["days"], current)
+    await get_db().patch_user(
+        uid,
+        {"subscription": {"kind": duration["kind"], "label": duration["label"], "until": until.isoformat()}},
+    )
+    nick = target.get("nickname") or uid
+    try:
+        await call.message.edit_text(
+            f"✅ Выдано: {nick}\nСрок: {duration['label']}\nДо: {until.strftime('%d.%m.%Y')}"
+        )
+    except Exception:
+        pass
+    await call.answer("Готово")
+
+
+@router.message(F.text == "🔄 Сбросить HWID")
+async def hwid_reset_start(message: Message) -> None:
+    if not is_admin(message.from_user.id):
+        return
+    users = await get_db().list_users()
+    await message.answer("Кому сбросить HWID?", reply_markup=hwid_users_keyboard(users))
+
+
+@router.callback_query(F.data.startswith("hwreset:"))
+async def cb_hwid_reset(call: CallbackQuery) -> None:
+    if not is_admin(call.from_user.id):
+        await call.answer("Нет доступа", show_alert=True)
+        return
+    uid = int(call.data.split(":")[1])
+    await get_db().patch_user(uid, {"hwid": None})
+    await call.answer("HWID сброшен ✅")
+    users = await get_db().list_users()
+    try:
+        await call.message.edit_text(
+            "Кому сбросить HWID?", reply_markup=hwid_users_keyboard(users)
+        )
+    except Exception:
+        pass
+
+
 @router.message(F.text)
-async def unknown_text(message: Message) -> None:
+async def unknown_text(message: Message, state: FSMContext) -> None:
     user = await get_db().get_user(message.from_user.id)
+    if user and not user.get("logged_in"):
+        nickname = (message.text or "").strip()
+        if NICKNAME_RE.fullmatch(nickname):
+            found = await get_db().find_by_nickname(nickname)
+            if found and str(found.get("user_id")) == str(message.from_user.id):
+                await state.set_state(Login.password)
+                await message.answer("Введи пароль:")
+                return
     if not user:
         markup = guest_keyboard()
     elif user.get("logged_in"):
