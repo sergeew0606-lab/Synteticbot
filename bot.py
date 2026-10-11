@@ -666,7 +666,7 @@ async def download_client(message: Message) -> None:
                 pass
         await message.answer_document(
             loader["file_id"],
-            caption="Syntetic Client | Legit 26.2 fabric\nКлиент на 1.21.4 фабрик инжект" + info,
+            caption="Клиент на 1.21.4 фабрик инжект" + info,
         )
         return
     path = find_client_file()
@@ -678,7 +678,6 @@ async def download_client(message: Message) -> None:
     await message.answer_document(
         FSInputFile(path),
         caption=(
-            "Syntetic Client | Legit 26.2 fabric\n"
             "Клиент на 1.21.4 фабрик инжект\n"
             f"SynteticLoader.exe • {size} байт • сборка {mtime}"
         ),
