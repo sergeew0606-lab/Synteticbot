@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timezone
 
 import httpx
@@ -73,10 +74,19 @@ class Database:
         return resp.json()
 
     async def list_users(self) -> dict:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(self._url())
-            resp.raise_for_status()
-        data = resp.json()
+        async with httpx.AsyncClient(timeout=20) as client:
+            last_exc = None
+            for attempt in range(3):
+                try:
+                    resp = await client.get(self._url())
+                    resp.raise_for_status()
+                    data = resp.json()
+                    break
+                except Exception as exc:
+                    last_exc = exc
+                    await asyncio.sleep(1.5)
+            else:
+                raise last_exc
         if not isinstance(data, dict):
             return {}
         return {
@@ -94,20 +104,20 @@ class Database:
         await self.patch_user(user_id, {"hwid": hwid})
 
     async def find_by_nickname(self, nickname: str) -> dict | None:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(
-                f"{self._base}.json",
-                params={
-                    "auth": self._secret,
-                    "orderBy": '"nickname"',
-                    "equalTo": f'"{nickname}"',
-                    "limitToFirst": "1",
-                },
-            )
-            resp.raise_for_status()
-        data = resp.json()
-        if isinstance(data, dict) and data:
-            return next(iter(data.values()))
+        users = await self.list_users()
+        for u in users.values():
+            if isinstance(u, dict) and (u.get("nickname") or "").lower() == nickname.lower():
+                return u
+        return None
+
+    async def find_user_id(self, nickname: str) -> int | None:
+        users = await self.list_users()
+        for raw_id, u in users.items():
+            if isinstance(u, dict) and (u.get("nickname") or "").lower() == nickname.lower():
+                try:
+                    return int(raw_id)
+                except Exception:
+                    return None
         return None
 
     async def count_users(self) -> int:

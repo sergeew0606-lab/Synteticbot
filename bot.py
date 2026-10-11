@@ -1102,11 +1102,8 @@ async def unknown_text(message: Message, state: FSMContext) -> None:
     if user and not user.get("logged_in"):
         nickname = (message.text or "").strip()
         if NICKNAME_RE.fullmatch(nickname):
-            found = await get_db().find_by_nickname(nickname)
-            if found and (
-                found.get("user_id") is None or str(found.get("user_id")) == str(message.from_user.id)
-            ):
-                await get_db().ensure_user_id(message.from_user.id)
+            found_id = await get_db().find_user_id(nickname)
+            if found_id == message.from_user.id:
                 await state.set_state(Login.password)
                 await message.answer("Введи пароль:")
                 return
