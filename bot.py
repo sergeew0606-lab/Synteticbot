@@ -690,8 +690,8 @@ async def upload_loader(message: Message) -> None:
         return
     doc = message.document
     name = (doc.file_name or "").lower()
-    if not name.endswith(".exe"):
-        await message.answer("Пришли .exe файл лоудера документом.")
+    if not (name.endswith(".exe") or name.endswith(".jar")):
+        await message.answer("Пришли .exe или .jar файл лоудера документом.")
         return
     await get_db().set_loader(
         {
