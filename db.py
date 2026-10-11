@@ -77,7 +77,18 @@ class Database:
             resp = await client.get(self._url())
             resp.raise_for_status()
         data = resp.json()
-        return data if isinstance(data, dict) else {}
+        if not isinstance(data, dict):
+            return {}
+        return {
+            raw_id: u
+            for raw_id, u in data.items()
+            if isinstance(u, dict)
+            and str(raw_id).lstrip("-").isdigit()
+            and u.get("nickname")
+        }
+
+    async def ensure_user_id(self, user_id: int) -> None:
+        await self.patch_user(user_id, {"user_id": user_id})
 
     async def set_hwid(self, user_id: int, hwid: str) -> None:
         await self.patch_user(user_id, {"hwid": hwid})
@@ -100,11 +111,7 @@ class Database:
         return None
 
     async def count_users(self) -> int:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(self._url() + "&shallow=true")
-            resp.raise_for_status()
-        data = resp.json()
-        return len(data) if isinstance(data, dict) else 0
+        return len(await self.list_users())
 
     async def list_keys(self) -> dict:
         async with httpx.AsyncClient(timeout=15) as client:

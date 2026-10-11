@@ -295,7 +295,26 @@ def generate_key(existing: set[str]) -> str:
 
 
 async def next_uid() -> int:
-    return (await get_db().count_users()) + 1
+    users = await get_db().list_users()
+    used = [int(u.get("uid")) for u in users.values() if isinstance(u, dict) and u.get("uid")]
+    return (max(used) if used else 0) + 1
+
+
+async def backfill_user_ids() -> None:
+    db = get_db()
+    users = await db.list_users()
+    missing = [
+        int(raw_id)
+        for raw_id, u in users.items()
+        if isinstance(u, dict) and not u.get("user_id")
+    ]
+    for user_id in missing:
+        try:
+            await db.ensure_user_id(user_id)
+        except Exception:
+            continue
+    if missing:
+        print(f"backfill: проставлен user_id для {len(missing)} аккаунтов")
 
 
 async def backfill_uids() -> None:
@@ -445,7 +464,13 @@ async def login_nickname(message: Message, state: FSMContext) -> None:
     if not user:
         await message.answer("Аккаунт с таким никнеймом не найден. Попробуй ещё раз.")
         return
-    if str(user.get("user_id")) != str(message.from_user.id):
+    owner_id = user.get("user_id")
+    if owner_id is None:
+        if await get_db().get_user(message.from_user.id):
+            await message.answer("Этот ник не твой. Войди под своим аккаунтом.")
+            return
+        await get_db().ensure_user_id(message.from_user.id)
+    elif str(owner_id) != str(message.from_user.id):
         await message.answer("Этот ник не твой. Войди под своим аккаунтом.")
         return
     await state.set_state(Login.password)
@@ -1072,7 +1097,10 @@ async def unknown_text(message: Message, state: FSMContext) -> None:
         nickname = (message.text or "").strip()
         if NICKNAME_RE.fullmatch(nickname):
             found = await get_db().find_by_nickname(nickname)
-            if found and str(found.get("user_id")) == str(message.from_user.id):
+            if found and (
+                found.get("user_id") is None or str(found.get("user_id")) == str(message.from_user.id)
+            ):
+                await get_db().ensure_user_id(message.from_user.id)
                 await state.set_state(Login.password)
                 await message.answer("Введи пароль:")
                 return
@@ -1094,6 +1122,10 @@ async def main() -> None:
         await backfill_uids()
     except Exception as exc:
         print(f"backfill error: {exc}")
+    try:
+        await backfill_user_ids()
+    except Exception as exc:
+        print(f"backfill user_id error: {exc}")
     print("Bot started, polling...")
     try:
         await dp.start_polling(bot)
