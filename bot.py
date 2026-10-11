@@ -12,6 +12,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
     CallbackQuery,
+    ErrorEvent,
     FSInputFile,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -460,7 +461,12 @@ async def login_nickname(message: Message, state: FSMContext) -> None:
     if not NICKNAME_RE.fullmatch(nickname):
         await message.answer("Никнейм не подходит: 3–32 символа, латиница, цифры, _")
         return
-    user = await get_db().find_by_nickname(nickname)
+    try:
+        user = await get_db().find_by_nickname(nickname)
+    except Exception as exc:
+        print(f"login find error: {exc}")
+        await message.answer("Ошибка связи с базой. Попробуй ещё раз через минуту.")
+        return
     if not user:
         await message.answer("Аккаунт с таким никнеймом не найден. Попробуй ещё раз.")
         return
@@ -1111,6 +1117,18 @@ async def unknown_text(message: Message, state: FSMContext) -> None:
     else:
         markup = login_keyboard()
     await message.answer("Не понял команду. Нажми /start.", reply_markup=markup)
+
+
+@dp.errors()
+async def on_error(event: ErrorEvent) -> None:
+    update = event.update
+    message = update.message if update and hasattr(update, "message") else None
+    print(f"HANDLER ERROR [{type(event.exception).__name__}]: {event.exception}")
+    if message is not None:
+        try:
+            await message.answer("⚠️ Ошибка. Попробуй ещё раз.")
+        except Exception:
+            pass
 
 
 async def main() -> None:
