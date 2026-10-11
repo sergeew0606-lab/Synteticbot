@@ -848,6 +848,7 @@ async def create_key_duration(call: CallbackQuery, state: FSMContext) -> None:
         "🔑 Ключ создан\n\n"
         f"Срок: {duration['label']}\n"
         f"{term}\n"
+        "Клиент на 1.21.4 фабрик инжект\n"
         "Ключ начинает работать, когда его активируют."
     )
     await call.answer("Готово")
@@ -1064,7 +1065,10 @@ async def cb_grant_duration(call: CallbackQuery) -> None:
     nick = target.get("nickname") or uid
     try:
         await call.message.edit_text(
-            f"✅ Выдано: {nick}\nСрок: {duration['label']}\nДо: {until.strftime('%d.%m.%Y')}"
+            f"✅ Выдано: {nick}\n"
+            f"Срок: {duration['label']}\n"
+            f"До: {until.strftime('%d.%m.%Y')}\n"
+            "Клиент на 1.21.4 фабрик инжект"
         )
     except Exception:
         pass
